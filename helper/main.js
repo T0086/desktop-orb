@@ -41,7 +41,12 @@ if (PARENT_PID) {
 }
 
 function readConfig() {
-  try { return JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8')) } catch (e) { return {} }
+  try {
+    // 去掉可能存在的 BOM：PowerShell 的 Set-Content -Encoding UTF8 会写 BOM，
+    // 而 JSON.parse 遇到 BOM 直接抛错 —— 结果是配置静默失效、球回到默认位置。
+    const raw = fs.readFileSync(CONFIG_PATH, 'utf8').replace(/^\uFEFF/, '')
+    return JSON.parse(raw)
+  } catch (e) { return {} }
 }
 
 function writeConfig(patch) {
