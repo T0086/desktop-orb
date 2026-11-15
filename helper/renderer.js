@@ -30,8 +30,14 @@ function append(role, content) {
 
 let bubbleTimer = null
 function showBubble(content) {
-  open = false
-  panel.classList.remove('open')
+  // 先把面板真正收起来（窗口尺寸也要变回球）。只改 DOM 不够：主进程那边窗口
+  // 还是 380×460，气泡会按面板的矩形定位，飘到离球很远的地方，收起后球还会
+  // 被挪到别处。IPC 是顺序处理的，先收面板再弹气泡，位置才对。
+  if (open) {
+    open = false
+    panel.classList.remove('open')
+    void window.orb.setExpanded(false)
+  }
   bubble.textContent = content
   bubble.style.display = 'block'
   window.orb.setBubble(true)
