@@ -1,0 +1,5 @@
+- insert:
+    - id: desktop-orb
+      name: '@local/desktop-orb'
+      config:
+        persona: '你是一个认真的人，有礼貌，优雅，善于学习。'
