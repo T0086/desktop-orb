@@ -53,12 +53,19 @@ function writeConfig(patch) {
 
 let win = null
 let snapEdge = null   // 当前贴的是哪条边：left / right / top / bottom
-let hoverTimer = null
 let animTimer = null
 let dragStart = null      // 拖动起点：{ cursor, win }
 let menuOpen = false       // 右键菜单开着的时候不要缩回去
-let hoverLocked = false    // 缩回去后锁住 hover，等鼠标真的离开过窗口一次再解锁
-let hoverPending = false   // 锁定期间鼠标进来过，解锁时补一次弹出
+let outsideSince = 0       // 光标离开球的位置的时刻，用来给"缩回去"一点延迟余地
+let panelOpen = false      // 面板展开中：窗口是 380×460，此时不能按"球"算贴边
+let bubbleOpen = false     // 气泡显示中：同上
+// 球的"归位"坐标（左上角，DIP）。**尺寸变换的唯一真源。**
+//
+// 旧写法是从当前窗口矩形反推（x + size[0] - PANEL_W 之类），一旦某次变换
+// 因为动画没跑完 / setBounds 抛错而落偏，误差会被下一次变换继承并放大：
+// 面板开着被"贴边收起"，窗口变成 380×460 却只剩 26px 在屏上，球画在窗口
+// 右下角 —— 直接滑到屏幕外，再也点不到。位置只认这一份，就不会累积。
+let ballPos = { x: 0, y: 0 }
 
 // 只用主屏。
 // 副屏方案弃用了：两块屏 DPI 不同时，光标坐标、窗口坐标、setPosition 三家换算
@@ -89,6 +96,49 @@ function clamp(x, y, w, h) {
     width: w,
     height: h,
   }
+}
+
+function cancelAnim() {
+  if (animTimer) { clearInterval(animTimer); animTimer = null }
+}
+
+/** 球的归位矩形：所有尺寸都从这里推导。 */
+function ballAnchor() {
+  return clamp(ballPos.x, ballPos.y, BALL, BALL)
+}
+
+/**
+ * 改窗口尺寸的唯一入口：先掐掉正在跑的补间，再从 ballPos 推导。
+ * 不掐动画的话，setBounds 会读到"动画中途"的坐标，算出来的位置是错的。
+ */
+function applyBounds(x, y, w, h) {
+  if (!win) return
+  cancelAnim()
+  const c = clamp(x, y, w, h)
+  try {
+    win.setBounds({
+      x: Math.round(c.x),
+      y: Math.round(c.y),
+      width: Math.round(w),
+      height: Math.round(h),
+    })
+  } catch (err) {
+    console.warn('[orb] setBounds failed:', err && err.message)
+  }
+}
+
+/**
+ * 从当前窗口矩形反推球的归位位置。窗口是球（76）时就是它本身；
+ * 是面板（380×460）时取右下角 —— 两种尺寸下这个公式都成立。
+ * 只在"用户刚动过窗口"之后调用，用一次就写回 ballPos。
+ */
+function captureBallPos() {
+  if (!win) return ballPos
+  const [x, y] = win.getPosition()
+  const [w, h] = win.getSize()
+  const c = clamp(x + w - BALL, y + h - BALL, BALL, BALL)
+  ballPos = { x: c.x, y: c.y }
+  return ballPos
 }
 
 // DIP 与物理像素互转：两块屏缩放比例不同时，光标 DIP 和窗口 DIP 不一定是同一套
@@ -172,22 +222,60 @@ function edgeRestPos(edge, x, y) {
 
 function peekIn(duration = 220) {
   if (!win || !snapEdge) return
-  const [x, y] = win.getPosition()
-  const p = hiddenPosition(snapEdge, x, y)
+  // 面板 / 气泡开着的时候窗口不是球，按 26px 去"收起"只会把它推出屏幕
+  if (panelOpen || bubbleOpen) return
+  const b = ballAnchor()
+  const p = hiddenPosition(snapEdge, b.x, b.y)
   animateTo(p.x, p.y, duration)
-  // 缩回去之后鼠标多半还压在露出的那一条上。这里不按时间屏蔽——按时间会吞掉
-  // 这期间产生的 mouseenter，而鼠标不动就不会再发第二次，结果永远唤不出。
-  // 改成"锁住"，等它真的离开过窗口一次才解锁。
-  hoverLocked = true
-  hoverPending = false
 }
 
 function peekOut(duration = 140) {
   if (!win || !snapEdge) return
-  const [x, y] = win.getPosition()
-  const p = edgeRestPos(snapEdge, x, y)
+  if (panelOpen || bubbleOpen) return
+  const b = ballAnchor()
+  const p = edgeRestPos(snapEdge, b.x, b.y)
   animateTo(p.x, p.y, duration)
 }
+
+function pointIn(px, py, x, y, w, h) {
+  return px >= x && px <= x + w && py >= y && py <= y + h
+}
+
+const HIDE_GRACE_MS = 260
+
+/**
+ * 贴边球的心跳：光标落在球身上就滑出来，离开一会儿就缩回去。
+ *
+ * 为什么用轮询而不是 mouseenter/mouseleave：
+ * 窗口是在光标**底下**自己滑走的，光标并没有跨过任何边界，浏览器不会补发
+ * enter，于是"刚缩进去、光标还压在上面"和"之后第一次移上来"这两个最常见的
+ * 情形全都会漏事件 —— 表现就是贴边后第一次悬停唤不出球，要移开再回来才行。
+ * 轮询光标位置没有这个问题，而且天生幂等：该出来就出来，该回去就回去。
+ */
+function reconcileHover() {
+  if (!win || !snapEdge || panelOpen || bubbleOpen || dragStart || menuOpen) {
+    outsideSince = 0
+    return
+  }
+  const b = ballAnchor()
+  const hid = hiddenPosition(snapEdge, b.x, b.y)
+  // 归位矩形和缩进去的矩形取并集，光标落在这块范围里都算"在球上"
+  const ux = Math.min(b.x, hid.x)
+  const uy = Math.min(b.y, hid.y)
+  const uw = Math.max(b.x + BALL, hid.x + BALL) - ux
+  const uh = Math.max(b.y + BALL, hid.y + BALL) - uy
+
+  const c = screen.getCursorScreenPoint()
+  if (pointIn(c.x, c.y, ux, uy, uw, uh)) {
+    outsideSince = 0
+    peekOut()
+    return
+  }
+  if (!outsideSince) outsideSince = Date.now()
+  if (Date.now() - outsideSince >= HIDE_GRACE_MS) peekIn()
+}
+
+setInterval(reconcileHover, 120)
 
 function createWindow() {
   const cfg = readConfig()
@@ -196,6 +284,10 @@ function createWindow() {
     ? clamp(cfg.position.x, cfg.position.y, BALL, BALL)
     : clamp(d.x + d.width - BALL - 24, d.y + d.height - BALL - 24, BALL, BALL)
 
+  ballPos = { x: pos.x, y: pos.y }
+  snapEdge = null
+  panelOpen = false
+  bubbleOpen = false
   win = new BrowserWindow({
     ...pos,
     frame: false,
@@ -221,17 +313,19 @@ function createWindow() {
 ipcMain.on('orb:moveBy', (event, dx, dy) => {
   if (!win || !Number.isFinite(dx) || !Number.isFinite(dy)) return
   // 拖动优先：打断在跑的动画，并且无动画地把窗口拽回完整位置
-  if (animTimer) { clearInterval(animTimer); animTimer = null }
-  if (snapEdge) {
-    const [cx, cy] = win.getPosition()
-    const r = edgeRestPos(snapEdge, cx, cy)
+  cancelAnim()
+  if (snapEdge && !panelOpen && !bubbleOpen) {
+    const b = ballAnchor()
+    const r = edgeRestPos(snapEdge, b.x, b.y)
     safeSetPosition(Math.round(r.x), Math.round(r.y))
+    ballPos = { x: r.x, y: r.y }
     snapEdge = null
   }
   const [x, y] = win.getPosition()
   const size = win.getSize()
   const next = clamp(x + Math.round(dx), y + Math.round(dy), size[0], size[1])
   safeSetPosition(next.x, next.y)
+  captureBallPos()
 })
 
 /**
@@ -244,12 +338,11 @@ ipcMain.on('orb:moveBy', (event, dx, dy) => {
  */
 ipcMain.on('orb:dragStart', () => {
   if (!win) return
-  if (animTimer) { clearInterval(animTimer); animTimer = null }
+  cancelAnim()
   // 按下的瞬间不要再把窗口挪到"完整位置"：唤出动画还没跑完时这么一跳，
   // 视觉上就是"点住往下弹"。直接以当前位置为起点开始拖，位置交给拖动本身。
   snapEdge = null
-  hoverLocked = false
-  hoverPending = false
+  outsideSince = 0
   const cursor = screen.getCursorScreenPoint()
   const wp = win.getPosition()
   dragStart = {
@@ -259,6 +352,7 @@ ipcMain.on('orb:dragStart', () => {
     winPhys: toPhys({ x: wp[0], y: wp[1] }),
     lastCursor: cursor,
     lastMoveAt: 0,
+    moved: false,
   }
 })
 
@@ -279,42 +373,59 @@ ipcMain.on('orb:dragMove', () => {
   dragStart.lastCursor = cur
   const [wx, wy] = win.getPosition()
   // 拖动过程中也夹在主屏范围内：往副屏方向拖，球会停在主屏边缘，不会跟过去。
-  const c = clamp(wx + dx, wy + dy, BALL, BALL)
+  // 夹的时候要用窗口**当前**的尺寸 —— 面板开着是 380×460，还按 76 去夹的话
+  // 面板能被拖出去三百多像素，右半边直接看不见。
+  const [ww, wh] = win.getSize()
+  const c = clamp(wx + dx, wy + dy, ww, wh)
   safeSetPosition(c.x, c.y)
+  if (dx || dy) dragStart.moved = true
 })
 
 ipcMain.on('orb:dragEnd', () => {
   if (!win) return
+  // 只有真的拖过才重新认锚点。单纯点一下（打开/关闭面板）窗口没动，
+  // 而面板贴着屏幕边时会被 clamp 挪位置（比如贴顶时面板的底边比球低 301px），
+  // 这时候再"从窗口矩形反推球的位置"，球就会在关面板时跳到别处。
+  const dragged = !!(dragStart && dragStart.moved)
   dragStart = null
-  const [x, y] = win.getPosition()
-  const c = clamp(x, y, BALL, BALL)
-  if (c.x !== x || c.y !== y) safeSetPosition(c.x, c.y)
-  writeConfig({ position: { x: c.x, y: c.y } })
-  snapEdge = edgeOf(c.x, c.y)
-  if (snapEdge) peekIn()
+  cancelAnim()
+  if (dragged) {
+    captureBallPos()
+    writeConfig({ position: { x: ballPos.x, y: ballPos.y } })
+    snapEdge = edgeOf(ballPos.x, ballPos.y)
+    outsideSince = 0
+  }
+  // 缩不缩回去交给 reconcileHover：光标还压在球上的时候不该缩
+  // （拖到边上松手那一下，光标必然还在球上）。
 })
 
 ipcMain.handle('orb:setExpanded', (event, expanded) => {
-  snapEdge = null
   if (!win) return false
-  const [x, y] = win.getPosition()
-  const size = win.getSize()
+  cancelAnim()
+  panelOpen = !!expanded
+  const b = ballAnchor()
   if (expanded) {
-    win.setBounds(clamp(x + size[0] - PANEL_W, y + size[1] - PANEL_H, PANEL_W, PANEL_H))
+    applyBounds(b.x + BALL - PANEL_W, b.y + BALL - PANEL_H, PANEL_W, PANEL_H)
   } else {
-    win.setBounds(clamp(x + size[0] - BALL, y + size[1] - BALL, BALL, BALL))
+    bubbleOpen = false
+    applyBounds(b.x, b.y, BALL, BALL)
+    outsideSince = 0
   }
   return true
 })
 
 ipcMain.handle('orb:setBubble', (event, show) => {
   if (!win) return false
-  const [x, y] = win.getPosition()
-  const size = win.getSize()
+  cancelAnim()
+  bubbleOpen = !!show
+  const b = ballAnchor()
+  // 气泡窗口的右下角必须对齐球的右下角，否则气泡会飘到别处
+  // （旧写法从当前窗口矩形推，面板开着时气泡会掉到屏幕下半部分）。
   if (show) {
-    win.setBounds(clamp(x + size[0] - BUBBLE_W, y + size[1] - BUBBLE_H, BUBBLE_W, BUBBLE_H))
+    applyBounds(b.x + BALL - BUBBLE_W, b.y + BALL - BUBBLE_H, BUBBLE_W, BUBBLE_H)
   } else {
-    win.setBounds(clamp(x + size[0] - BALL, y + size[1] - BALL, BALL, BALL))
+    applyBounds(b.x, b.y, BALL, BALL)
+    outsideSince = 0
   }
   return true
 })
@@ -381,37 +492,19 @@ ipcMain.on('poem:moveBy', (event, dx, dy) => {
 
 ipcMain.on('orb:savePosition', () => {
   if (!win) return
-  const [x, y] = win.getPosition()
-  writeConfig({ position: { x, y } })
-  // 松手时判定贴边：贴上了就缩进去，只露一条边
-  snapEdge = edgeOf(x, y)
-  if (snapEdge) peekIn()
+  cancelAnim()
+  captureBallPos()
+  writeConfig({ position: { x: ballPos.x, y: ballPos.y } })
+  // 松手时判定贴边：贴上了就交给 reconcileHover 决定缩不缩
+  snapEdge = edgeOf(ballPos.x, ballPos.y)
+  outsideSince = 0
 })
 
 // 悬停唤出 / 移开收回。mouseenter 不冒泡，由渲染进程在 body 上转发。
-ipcMain.on('orb:hover', (event, inside) => {
-  if (!win || !snapEdge) return
-  if (inside) {
-    if (hoverLocked) { hoverPending = true; return }
-    if (hoverTimer) { clearTimeout(hoverTimer); hoverTimer = null }
-    peekOut()
-    return
-  }
-  // 鼠标离开窗口：解锁。如果锁定期间进来过，直接补一次弹出，不再等
-  hoverLocked = false
-  if (hoverPending) { hoverPending = false; peekOut(); return }
-  if (menuOpen) return
-  if (hoverTimer) return
-  hoverTimer = setTimeout(() => {
-    hoverTimer = null
-    if (!snapEdge || menuOpen) return
-    // 窗口弹出来之后鼠标可能还在里面，用系统光标位置复核，避免缩回/弹出抖动
-    const p = screen.getCursorScreenPoint()
-    const [x, y] = win.getPosition()
-    const [w, h] = win.getSize()
-    if (p.x >= x && p.x <= x + w && p.y >= y && p.y <= y + h) return
-    peekIn()
-  }, 380)
+// 这里只当"立刻复核一次"的触发器用，判断逻辑全在 reconcileHover 里 ——
+// 事件会漏（窗口在光标底下滑走不产生 enter），轮询不会。
+ipcMain.on('orb:hover', () => {
+  reconcileHover()
 })
 
 function readPort() {
@@ -476,12 +569,16 @@ ipcMain.on('orb:contextMenu', () => {
       label: '取消贴边',
       click: () => {
         if (!win) return
-        const [x, y] = win.getPosition()
-        const r = snapEdge ? edgeRestPos(snapEdge, x, y) : { x, y }
+        const b = ballAnchor()
+        const r = snapEdge ? edgeRestPos(snapEdge, b.x, b.y) : { x: b.x, y: b.y }
         snapEdge = null
-        hoverLocked = false
-        hoverPending = false
-        animateTo(r.x, r.y, 160)
+        outsideSince = 0
+        ballPos = { x: r.x, y: r.y }
+        if (panelOpen) {
+          applyBounds(b.x + BALL - PANEL_W, b.y + BALL - PANEL_H, PANEL_W, PANEL_H)
+        } else {
+          animateTo(r.x, r.y, 160)
+        }
         writeConfig({ position: { x: r.x, y: r.y } })
       },
     },
@@ -491,17 +588,8 @@ ipcMain.on('orb:contextMenu', () => {
     window: win,
     callback: () => {
       menuOpen = false
-      // 菜单关掉之后要补一次缩回判定：鼠标移到菜单上时发的那次 mouseleave
-      // 被 menuOpen 拦掉了（菜单开着窗口不能跑），而鼠标已经在窗口外，
-      // 不会再有第二次 leave —— 不补的话球就永远露在外面。
-      setTimeout(() => {
-        if (!win || !snapEdge) return
-        const p = screen.getCursorScreenPoint()
-        const [x, y] = win.getPosition()
-        const [w, h] = win.getSize()
-        if (p.x >= x && p.x <= x + w && p.y >= y && p.y <= y + h) return
-        peekIn()
-      }, 150)
+      // 菜单期间 reconcileHover 是停摆的，关掉之后重新起算一次宽限
+      outsideSince = 0
     },
   })
 })
