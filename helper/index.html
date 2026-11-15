@@ -1,0 +1,116 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<style>
+  html, body { margin: 0; height: 100%; background: transparent; overflow: hidden; }
+  #app { position: fixed; inset: 0; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
+  #ball {
+    position: absolute; right: 10px; bottom: 10px; width: 56px; height: 56px;
+    border-radius: 50%; overflow: hidden;
+    cursor: grab; user-select: none; -webkit-user-select: none;
+    border: 1px solid rgba(255,255,255,0.28);
+    background:
+      radial-gradient(circle at 33% 26%, rgba(255,255,255,0.92) 0%, rgba(255,255,255,0) 30%),
+      linear-gradient(158deg,
+        #d6e4ff 0%,
+        #87a8ee 18%,
+        #3f5fa8 40%,
+        #141f40 56%,
+        #2c4585 70%,
+        #7a97d8 86%,
+        #c2d2f2 100%);
+    box-shadow: 0 3px 10px rgba(0,0,0,0.35);
+    filter: hue-rotate(var(--orb-hue, 0deg));
+    transition: filter 1.4s ease;
+  }
+  #ball::before {
+    content: '';
+    position: absolute; inset: 0;
+    background: repeating-linear-gradient(115deg,
+      rgba(190,220,255,0) 0px,
+      rgba(190,220,255,0.26) 10px,
+      rgba(190,220,255,0) 22px,
+      rgba(230,242,255,0.20) 32px,
+      rgba(190,220,255,0) 44px,
+      rgba(190,220,255,0) 50px);
+    background-repeat: repeat;
+    animation: wave-flow 4s linear infinite;
+    pointer-events: none;
+  }
+  #ball:active { cursor: grabbing; }
+  #ball.thinking::before { animation-duration: 1.15s; }
+  #ball.thinking {
+    box-shadow: 0 3px 10px rgba(0,0,0,0.35), 0 0 14px 4px rgba(120,165,255,0.55);
+  }
+  @keyframes wave-flow {
+    0% { background-position: 0px 0px; }
+    100% { background-position: 55.17px 0px; }
+  }
+  #panel {
+    position: absolute; left: 8px; right: 8px; top: 8px; bottom: 72px;
+    background: rgba(24,26,34,0.96); border: 1px solid rgba(255,255,255,0.12); border-radius: 14px;
+    display: none; flex-direction: column; padding: 12px; box-sizing: border-box; gap: 8px; color: #e8eaf2;
+  }
+  #panel.open { display: flex; }
+  #title { font-weight: 600; font-size: 14px; display: flex; justify-content: space-between; align-items: center; }
+  #title button { padding: 2px 10px; background: transparent; color: #9aa3b8; }
+  #log { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; font-size: 13px; min-height: 80px; }
+  .msg { padding: 6px 10px; border-radius: 10px; max-width: 85%; white-space: pre-wrap; word-break: break-word; }
+  .msg.user { align-self: flex-end; background: #3f6fe0; color: #fff; }
+  .msg.assistant { align-self: flex-start; background: rgba(255,255,255,0.08); }
+  #text { resize: none; min-height: 40px; max-height: 80px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.15); background: rgba(255,255,255,0.06); color: #e8eaf2; padding: 8px; font-family: inherit; font-size: 13px; outline: none; }
+  button { border: 1px solid rgba(255,255,255,0.15); background: #3f6fe0; color: #fff; border-radius: 8px; padding: 6px 14px; cursor: pointer; font-size: 13px; font-family: inherit; }
+  button:disabled { opacity: .5; cursor: default; }
+  #status { font-size: 12px; color: #9aa3b8; min-height: 16px; }
+  #bubble {
+    position: absolute; right: 10px; bottom: 78px;
+    max-width: 210px;
+    padding: 8px 12px;
+    background: #f4f6ff;
+    color: #16203a;
+    border: 2px solid #1b2440;
+    border-radius: 14px;
+    font-size: 13px;
+    line-height: 1.2;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.35);
+    display: none;
+    box-sizing: border-box;
+    white-space: normal;
+    word-break: break-word;
+  }
+  #bubble::before {
+    content: '';
+    position: absolute;
+    bottom: -10px;
+    right: 17px;
+    border: 9px solid transparent;
+    border-top: 11px solid #1b2440;
+    border-bottom: 0;
+  }
+  #bubble::after {
+    content: '';
+    position: absolute;
+    bottom: -6px;
+    right: 20px;
+    border: 6px solid transparent;
+    border-top: 8px solid #f4f6ff;
+    border-bottom: 0;
+  }
+</style>
+</head>
+<body>
+  <div id="app">
+    <div id="panel">
+      <div id="title"><span>和 DeepSeek 对话</span><button id="close" type="button">×</button></div>
+      <div id="log"></div>
+      <div id="status"></div>
+      <textarea id="text" placeholder="想对 DeepSeek 说什么… (Enter 发送，Shift+Enter 换行)"></textarea>
+      <div style="display:flex;justify-content:flex-end"><button id="send" type="button">发送</button></div>
+    </div>
+    <div id="ball"></div>
+    <div id="bubble"></div>
+  </div>
+  <script src="renderer.js"></script>
+</body>
+</html>
