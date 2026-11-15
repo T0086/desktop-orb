@@ -1,0 +1,59 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8" />
+<style>
+  html, body { margin: 0; height: 100%; background: transparent; overflow: hidden; }
+  #paper {
+    position: fixed; inset: 0;
+    display: flex; flex-direction: column;
+    padding: 44px 56px 36px;
+    box-sizing: border-box;
+    background: #f7f5ee;
+    color: #1a1a1a;
+    border-radius: 10px;
+    box-shadow: 0 10px 40px rgba(0,0,0,0.5);
+    cursor: grab;
+    overflow: auto;
+  }
+  #paper.dragging { cursor: grabbing; }
+  #close {
+    position: absolute; top: 8px; right: 10px;
+    width: 32px; height: 32px; padding: 0;
+    border: none; background: transparent;
+    color: #9a9484; font-size: 22px; line-height: 1;
+    cursor: pointer; border-radius: 6px;
+  }
+  #close:hover { color: #3a3628; background: rgba(0,0,0,0.05); }
+  #content {
+    flex: 1;
+    display: flex; flex-direction: column;
+    justify-content: center; align-items: center;
+    /* 练字看字，字体本身得是正体 */
+    font-family: "KaiTi", "STKaiti", "Kaiti SC", "SimSun", serif;
+    user-select: none;
+  }
+  /* 楷体多数没有真·粗体，浏览器会做合成加粗；再叠一层极细描边让笔画更实。 */
+  .poem-title {
+    font-size: 34px; font-weight: 700; letter-spacing: 0.06em;
+    -webkit-text-stroke: 0.4px currentColor;
+  }
+  .poem-author {
+    font-size: 16px; font-weight: 600; color: #8d8778;
+    font-family: system-ui, sans-serif; margin-top: 10px;
+  }
+  .poem-body {
+    font-size: 30px; font-weight: 700; line-height: 2; margin-top: 34px;
+    -webkit-text-stroke: 0.4px currentColor;
+  }
+  .poem-body div { text-align: center; }
+</style>
+</head>
+<body>
+  <div id="paper">
+    <button id="close" type="button" title="关闭">×</button>
+    <div id="content"><div class="poem-body">选一首…</div></div>
+  </div>
+  <script src="poem.js"></script>
+</body>
+</html>
