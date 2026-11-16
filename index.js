@@ -232,6 +232,7 @@ export function apply(ctx, config) {
   let busy = false
   let orbBusy = false
   let orbChild = null
+  let orbTimer = null
   ctx.on('agent/status', (payload) => {
     busy = !!(payload && payload.status === 'running')
   })
@@ -295,10 +296,23 @@ export function apply(ctx, config) {
         writeFileSync(join(dir, 'port.txt'), String(port))
       } catch (e) {}
       orbChild = launchOrb(ctx)
+      // 球是独立进程，死法很多：从任务栏关掉、任务管理器结束、渲染进程崩。
+      // 宿主只在这里启动它一次，没人看着它就永远回不来了 —— 所以每 20 秒看一次 pid。
+      if (!orbTimer) {
+        orbTimer = setInterval(() => {
+          try {
+            const pf = join(dshHome(), 'desktop-orb', 'helper.pid')
+            const pid = existsSync(pf) ? Number(readFileSync(pf, 'utf8').trim()) : 0
+            if (!pid || !pidAlive(pid)) orbChild = launchOrb(ctx)
+          } catch (e) {}
+        }, 20000)
+        try { orbTimer.unref?.() } catch (e) {}
+      }
     })
 
     return () => {
       try { server.close() } catch (e) {}
+      try { if (orbTimer) { clearInterval(orbTimer); orbTimer = null } } catch (e) {}
       try { if (orbChild && orbChild.pid) process.kill(orbChild.pid) } catch (e) {}
     }
   })
