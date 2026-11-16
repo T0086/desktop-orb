@@ -57,6 +57,7 @@ function writeConfig(patch) {
 }
 
 let win = null
+let quitting = false      // 只有右键「退出」和宿主消失才算真的要退出
 let snapEdge = null   // 当前贴的是哪条边：left / right / top / bottom
 let animTimer = null
 let dragStart = null      // 拖动起点：{ cursor, win }
@@ -282,6 +283,14 @@ function reconcileHover() {
 
 setInterval(reconcileHover, 120)
 
+// 任务栏那条是 shell 的记账（ITaskbarList.DeleteTab），不是窗口样式：explorer 重启、
+// DPI 切换、shell 重建都会把它忘掉，选项卡回来之后又能从那儿把整个应用关掉。
+// 窗口样式压不住它，只能定期重新按一次，最多 30 秒自己消失。
+setInterval(() => {
+  if (!win) return
+  try { if (!win.isDestroyed()) win.setSkipTaskbar(true) } catch (err) {}
+}, 30000)
+
 function createWindow() {
   const cfg = readConfig()
   const d = screen.getPrimaryDisplay().workArea
@@ -313,6 +322,21 @@ function createWindow() {
   win.setAlwaysOnTop(true, 'screen-saver')
   win.loadFile(path.join(__dirname, 'index.html'))
   win.on('closed', () => { win = null })
+
+  // 球就是整个应用：窗口被关掉不该等于进程结束。拦下关闭，只当一次"归位"。
+  win.on('close', (e) => {
+    if (quitting) return
+    e.preventDefault()
+    try { win.showInactive() } catch (err) {}
+  })
+
+  // skipTaskbar 在创建阶段不一定落到窗口样式上（focusable:false 之后尤其容易丢），
+  // 结果任务栏多出一个 Electron 图标，从那里关掉就等于杀掉整个进程 —— 窗口没了，
+  // 插件那边也不会再拉起它。窗口真正建好之后再压一次，样式才留得住。
+  win.once('ready-to-show', () => {
+    try { win.setSkipTaskbar(true) } catch (err) {}
+    try { win.setAlwaysOnTop(true, 'screen-saver') } catch (err) {}
+  })
 }
 
 ipcMain.on('orb:moveBy', (event, dx, dy) => {
@@ -711,4 +735,8 @@ function pollTalkKey() {
 if (GetAsyncKeyState) setInterval(pollTalkKey, 40)
 
 app.whenReady().then(createWindow)
-app.on('window-all-closed', () => app.quit())
+app.on('before-quit', () => { quitting = true })
+// 正常退出走 quitting；其余情况窗口全没了也要把球重建回来，而不是结束进程。
+app.on('window-all-closed', () => {
+  if (!quitting) { try { createWindow() } catch (e) {} }
+})
