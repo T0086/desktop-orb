@@ -1,5 +1,7 @@
 # desktop-orb
 
+> 作者：空游
+
 一个 DSH 插件：桌面悬浮球。显示用量/费用，点开能进 DSH 会话聊天，偶尔念一句诗。
 
 它和 `beacon` 不是一回事：beacon 是独立的 PowerShell 常驻条（课程/硬件/天气），这个是**随 DSH 启动的 Electron 小窗**。

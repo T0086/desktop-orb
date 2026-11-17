@@ -2,6 +2,7 @@
   "name": "@local/desktop-orb",
   "version": "1.0.2",
   "private": true,
+  "author": "空游",
   "type": "module",
   "exports": { ".": "./index.js" },
   "files": ["index.js", "cordis.patch.yml"],
